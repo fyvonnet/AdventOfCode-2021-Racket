@@ -30,8 +30,8 @@
 ; 4    5
 ;  6666
 
-(define segments-lists
-  (list 
+(define segments-vector
+  (vector
     '(0 1 2   4 5 6)   ;0
     '(    2     5  )   ;1
     '(0   2 3 4   6)   ;2
@@ -44,63 +44,104 @@
     '(0 1 2 3   5 6))) ;9
 
 (define (decode-pattern pattern)
-  (for/fold
-    ([one   0]
-     [four  0]
-     [seven 0]
-     [six-segments '()]
-     #:result
-     (let
-       ([segments (make-vector 7 0)] [eight 127] [six null] [zero-or-nine null] [zero null] [nine null])
+  (let*
+    ([segments (make-vector  7 0)]
+     [signals  (make-vector 10 null)]
+     [zero-or-nine null]
+     [six-segments
+       (for/fold
+         ([lst '()])
+         ([s pattern])
+         (case (string-length s)
+           [(2) (vector-set! signals 1 (string->binary s)) lst]
+           [(3) (vector-set! signals 7 (string->binary s)) lst]
+           [(4) (vector-set! signals 4 (string->binary s)) lst]
+           [(6) (cons (string->binary s) lst)]
+           [else lst]))])
 
-       ; one has a segment not in six
-       (for ([x six-segments])
-         (if (= one (bitwise-and x one))
-           (set! zero-or-nine (cons x zero-or-nine))
-           (set! six x)))
+    ; all segments on
+    (vector-set! signals 8 127)
 
-       ; four has a segment not in zero
-       (for ([x zero-or-nine])
-         (if (= four (bitwise-and four x))
-           (set! nine x)
-           (set! zero x)))
+    ; one has a segment not in six
+    (for ([x six-segments])
+      (if (= (vector-ref signals 1) (bitwise-and x (vector-ref signals 1)))
+        (set! zero-or-nine (cons x zero-or-nine))
+        (vector-set! signals 6 x)))
 
-       (vector-set! segments 0 (bitwise-xor one seven)) ; segment 0 is in one, not seven
-       (vector-set! segments 5 (bitwise-and one six)) ; segment 5 is the only common to one and six
-       (vector-set! segments 2 (bitwise-xor one (vector-ref segments 5))) ; segment 2 is the other one in one
-       (vector-set! segments 3 (bitwise-and four (bitwise-xor four zero))) ; segment 3 is present in four, not in zero
-       (vector-set! segments 1 (bitwise-xor (bitwise-xor one four) (vector-ref segments 3))) ; other segment of the 1-3 part of four
-       (vector-set! segments 4 (bitwise-xor eight nine)) ; segment 4 is in eight, not in nine
-       (vector-set! segments 6 (for/fold ([lastseg eight]) ([bit (vector->list segments)]) (bitwise-xor lastseg bit))) ; last segment
+    ; four has a segment not in zero
+    (for ([x zero-or-nine])
+      (if (= (vector-ref signals 4) (bitwise-and (vector-ref signals 4) x))
+        (vector-set! signals 9 x)
+        (vector-set! signals 0 x)))
 
-       ; make signal/digit association list
-       (for/list
-         ([seglist segments-lists]
-          [digit (in-range 10)])
-         (list
-           (for/fold
-             ([bin 0])
-             ([s seglist])
-             (bitwise-ior bin (vector-ref segments s)))
-           digit)))) 
+    ; segment 0 is in one, not in seven
+    (vector-set! segments 0
+                 (bitwise-xor
+                   (vector-ref signals 1)
+                   (vector-ref signals 7)))
 
-    ([str pattern])
-    (case (string-length str)
-      [(2)  (values (string->binary str) four seven six-segments)]
-      [(3)  (values one four (string->binary str) six-segments)]
-      [(4)  (values one (string->binary str) seven six-segments)]
-      [(6)  (values one four seven (cons (string->binary str) six-segments))]
-      [else (values one four seven six-segments)])))
+    ; segment 5 is the only common to one and six
+    (vector-set! segments 5
+                 (bitwise-and
+                   (vector-ref signals 1)
+                   (vector-ref signals 6)))
+
+    ; segment 2 is the other one in one
+    (vector-set! segments 2
+                 (bitwise-xor
+                   (vector-ref signals  1)
+                   (vector-ref segments 5)))
+
+    ; segment 3 is present in four, not in zero
+    (vector-set! segments 3
+                 (bitwise-and
+                   (vector-ref signals 4)
+                   (bitwise-xor
+                     (vector-ref signals 4)
+                     (vector-ref signals 0))))
+
+    ; other segment of the 1-3 part of four
+    (vector-set! segments 1
+                 (bitwise-xor
+                   (vector-ref segments 3)
+                   (bitwise-xor
+                     (vector-ref signals 1)
+                     (vector-ref signals 4))))
+
+    ; segment 4 is in eight, not in nine
+    (vector-set! segments 4
+                 (bitwise-xor 127 (vector-ref signals 9)))
+
+    ; last segment
+    (vector-set! segments 6
+                 (for/fold
+                   ([lastseg 127])
+                   ([bit (vector->list segments)])
+                   (bitwise-xor lastseg bit)))
+
+    ; complete signals list and make signal/digit association list
+    (for/list
+      ([sign (vector->list signals)]
+       [digit (in-range 10)])
+      (list
+        (if (null? sign)
+          (for/fold
+            ([bin 0])
+            ([s (vector-ref segments-vector digit)])
+            (bitwise-ior bin (vector-ref segments s)))
+          sign)
+        digit))))
 
 
-(let
-  ((input (call-with-input-file "inputs/day08" read-input)))
+(let ((input (call-with-input-file "inputs/day08" read-input)))
+
   (displayln
     (for/sum
       ([digits (map cadr input)])
       (for/sum
         ([digit digits])
         (if (member (string-length digit) '(2 3 4 7)) 1 0))))
+
   (displayln
     (for/sum
       ([entry input])
@@ -114,11 +155,11 @@
                (second entry))])
           (+ (* 10 output-value) digit))))))
 
-;
+
 ; exemple: acedgfb cdfbe gcdfa fbcad dab cefabd cdfgeb eafb cagedb ab
 ; 
-; 1 is ab (length 2)
-; 7 is dab (length 3)
+; 1 is ab (2 segments)
+; 7 is dab (3 segments)
 ; 
 ;  dddd
 ; .    x
@@ -130,7 +171,7 @@
 ; 
 ; (x is a or b)
 ; 
-; 4 is eafb (length 4)
+; 4 is eafb (4 segments)
 ; 
 ;  dddd
 ; y    x
@@ -142,7 +183,7 @@
 ; 
 ; (y is e or f)
 ; 
-; 0, 6 and 9 are in cefabd cdfgeb and cagedb (length 6)
+; 0, 6 and 9 are in cefabd cdfgeb and cagedb (6 segments)
 ; 6 is cdfgeb (no a)
 ; a and b are deducted
 ; 
@@ -186,5 +227,4 @@
 ; g    b
 ; g    b
 ;  cccc
-;
 
